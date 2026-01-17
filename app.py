@@ -290,16 +290,17 @@ def check_card():
                 'logs': live_logs
             }), 200
         else:
-            # Card is valid but payment declined (insufficient funds, etc.)
-            log("⚠️ Your card was declined", "pending")
+            # Payment declined - use REAL error message from gateway
+            real_error = payment_result.get('error', 'Your card was declined')
+            log(f"⚠️ {real_error}", "pending")
             return jsonify({
                 'success': False,
-                'status': 'valid_declined',
-                'message': 'Your card was declined',  # Generic message for valid but declined
+                'status': 'declined',
+                'message': real_error,  # REAL message from gateway
                 'card': mask_card(card_number),
                 'card_type': stripe_result['card_info'].get('brand', 'Unknown').upper(),
-                'error': 'Your card was declined',
-                'result': 'VALID BUT DECLINED ⚠️',
+                'error': real_error,
+                'result': 'DECLINED ❌',
                 'logs': live_logs
             }), 200
         
