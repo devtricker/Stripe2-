@@ -30,8 +30,7 @@ def mask_card(card_number):
 def parse_card_input(card_input):
     """
     Parse card input in format: number|month|year|cvv
-    Example: 5598880399368788|02|31|638
-    Year format: YY (2 digits)
+    Example: 5598880399368788|02|2031|638
     """
     try:
         parts = card_input.strip().replace(' ', '').split('|')
@@ -49,18 +48,24 @@ def parse_card_input(card_input):
             return None
         if not exp_month.isdigit() or not (1 <= int(exp_month) <= 12):
             return None
-        if not exp_year.isdigit() or len(exp_year) != 2:
-            return None
-        if not cvv.isdigit() or not (3 <= len(cvv) <= 4):
+        
+        # Accept both YY and YYYY formats
+        if not exp_year.isdigit():
             return None
         
-        # Convert YY to YYYY
-        year_full = f"20{exp_year}"
+        # Convert YY to YYYY if needed
+        if len(exp_year) == 2:
+            exp_year = '20' + exp_year  # Convert 26 -> 2026
+        elif len(exp_year) != 4:
+            return None
+            
+        if not cvv.isdigit() or not (3 <= len(cvv) <= 4):
+            return None
         
         return {
             'card_number': card_number,
             'exp_month': exp_month,
-            'exp_year': year_full,
+            'exp_year': exp_year,
             'cvv': cvv
         }
     except:
@@ -176,10 +181,9 @@ def process_payment(payment_method):
         else:
             try:
                 error_data = response.json()
-                # Extract real error message
-                error_msg = error_data.get('message', error_data.get('error', str(error_data)))
+                error_msg = error_data.get('message', str(error_data))
                 log(f"❌ Payment declined: {error_msg}", "error")
-                return {'success': False, 'error': error_msg, 'code': error_data.get('code', 'declined')}
+                return {'success': False, 'error': error_msg}
             except:
                 log(f"❌ Payment failed: HTTP {response.status_code}", "error")
                 return {'success': False, 'error': f'HTTP {response.status_code}'}
@@ -204,12 +208,12 @@ def check_card():
         log("🚀 Starting card check...", "info")
         log(f"📝 Request from {request.remote_addr}", "info")
         
-                    if 'card' not in data:
+        if 'card' not in data:
             log("❌ Missing 'card' parameter", "error")
             return jsonify({
                 'success': False,
                 'status': 'error',
-                'message': 'Missing card parameter. Format: number|month|year|cvv (YY format)',
+                'message': 'Missing card parameter. Format: number|month|year|cvv',
                 'logs': live_logs
             }), 400
         
@@ -221,7 +225,7 @@ def check_card():
             return jsonify({
                 'success': False,
                 'status': 'error',
-                'message': 'Invalid format. Use: number|MM|YY|cvv (e.g., 4111111111111111|12|25|123)',
+                'message': 'Invalid format. Use: number|month|year|cvv (e.g., 4111111111111111|12|2025|123)',
                 'logs': live_logs
             }), 400
         
@@ -243,13 +247,15 @@ def check_card():
         )
         
         if not stripe_result['success']:
-            log("❌ Card validation failed", "error")
+            # Real error from Stripe (invalid card, etc.)
+            error_message = stripe_result.get('error', 'Card validation failed')
+            log(f"❌ {error_message}", "error")
             return jsonify({
                 'success': False,
                 'status': 'declined',
-                'message': 'Card declined by Stripe',
+                'message': error_message,  # Real error message
                 'card': mask_card(card_number),
-                'error': stripe_result.get('error'),
+                'error': error_message,
                 'result': 'DEAD ❌',
                 'logs': live_logs
             }), 200
@@ -273,21 +279,16 @@ def check_card():
                 'logs': live_logs
             }), 200
         else:
-            # Stripe validated but payment declined
-            log("⚠️ Card valid but payment declined", "pending")
-            
-            # Get real error message
-            error_msg = payment_result.get('error', 'Payment declined')
-            error_code = payment_result.get('code', 'declined')
-            
+            # Card is valid but payment declined (insufficient funds, etc.)
+            log("⚠️ Your card was declined", "pending")
             return jsonify({
                 'success': False,
-                'status': 'declined',
-                'message': error_msg,
+                'status': 'valid_declined',
+                'message': 'Your card was declined',  # Generic message for valid but declined
                 'card': mask_card(card_number),
                 'card_type': stripe_result['card_info'].get('brand', 'Unknown').upper(),
-                'code': error_code,
-                'result': f'Declined: {error_msg}',
+                'error': 'Your card was declined',
+                'result': 'VALID BUT DECLINED ⚠️',
                 'logs': live_logs
             }), 200
         
@@ -453,16 +454,16 @@ def index():
             <p class="subtitle">Real charge gateway checker</p>
             
             <div class="info-box">
-                ℹ️ Enter card in format: <strong>number|MM|YY|cvv</strong>
-                <div class="format-example">5598880399368788|02|31|638</div>
+                ℹ️ Enter card in format: <strong>number|month|year|cvv</strong>
+                <div class="format-example">5598880399368788|02|2031|638</div>
             </div>
             
             <form id="cardForm">
                 <div class="form-group">
                     <label>Card Details (one per line for bulk check)</label>
-                    <textarea id="cardInput" placeholder="5598880399368788|02|31|638
-4111111111111111|12|25|123
-5555555555554444|06|27|456" required></textarea>
+                    <textarea id="cardInput" placeholder="5598880399368788|02|2031|638
+4111111111111111|12|2025|123
+5555555555554444|06|2027|456" required></textarea>
                 </div>
                 <button type="submit" id="submitBtn">🔍 Check Card(s)</button>
             </form>
@@ -554,16 +555,12 @@ def index():
                 let className = '';
                 
                 if (r.status === 'charged') className = 'live';
-                else if (r.status === 'declined') className = 'valid-declined';
+                else if (r.status === 'valid_declined') className = 'valid-declined';
                 else className = 'dead';
                 
                 resultDiv.className = `result ${className}`;
                 html += `${i + 1}. ${masked} - ${r.result}<br>`;
-                if (r.card_type) {
-                    html += `   Type: ${r.card_type} | ${r.message}<br><br>`;
-                } else {
-                    html += `   ${r.message}<br><br>`;
-                }
+                html += `   Type: ${r.card_type} | ${r.message}<br><br>`;
             });
             
             resultDiv.innerHTML = html;
