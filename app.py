@@ -178,11 +178,22 @@ def process_payment(payment_method):
             result = response.json()
             log("✅ Payment processed successfully!", "success")
             return {'success': True, 'response': result}
+        elif response.status_code == 429:
+            log("❌ Rate limited: HTTP 429", "error")
+            return {'success': False, 'error': 'Rate limited (HTTP 429)'}
+        elif response.status_code == 422:
+            try:
+                error_data = response.json()
+                error_msg = error_data.get('message', 'Your card was declined')
+                log(f"❌ Payment declined: {error_msg}", "error")
+                return {'success': False, 'error': error_msg}
+            except:
+                return {'success': False, 'error': 'Your card was declined'}
         else:
             try:
                 error_data = response.json()
-                error_msg = error_data.get('message', str(error_data))
-                log(f"❌ Payment declined: {error_msg}", "error")
+                error_msg = error_data.get('message', f'HTTP {response.status_code}')
+                log(f"❌ Payment failed: {error_msg}", "error")
                 return {'success': False, 'error': error_msg}
             except:
                 log(f"❌ Payment failed: HTTP {response.status_code}", "error")
